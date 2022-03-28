@@ -9,9 +9,11 @@ from torchtext.vocab import Vectors, GloVe
 import torch.nn.functional as F
 
 class Att_based_enc(torch.nn.Module):
-  def __init__(self, vocab_size, emb_dim):
+  def __init__(self, vocab_size, emb_dim, weight):
     super(Att_based_enc, self).__init__()
-    self.word_emb = torch.nn.Embedding(vocab_size, emb_dim)
+    #fix the word embedding matrix
+    #self.word_emb = torch.nn.Embedding(vocab_size, emb_dim)
+    self.word_emb = torch.nn.Embedding.from_pretrained(weight, freeze = True)
     self.trans_matrix = torch.nn.Linear(emb_dim, emb_dim, bias = False)
     self.softmax = torch.nn.Softmax(dim = -1)
 
@@ -31,7 +33,9 @@ class Att_based_enc(torch.nn.Module):
     att_w = self.softmax(d.permute(0,2,1)).reshape(x.shape[0],-1,1)
     out = (att_w * emb).sum(dim = 1)
     return out, y_n
-    
+  
+  
+  
 class AutoEnc(torch.nn.Module):
   def __init__(self, k_aspect, emb_dim):
     super(AutoEnc, self).__init__()
@@ -43,15 +47,20 @@ class AutoEnc(torch.nn.Module):
     out = self.w_trans_matrix(x) # b_s, emb_dim, k_aspect
     p = self.softmax(out)
     out = self.t_trans_matrix(p)
-    return out
-        
+    return out, self.t_trans_matrix.weight.permute(1,0),p
+  
+  
 class Aspect_Extrac(torch.nn.Module):
-  def __init__(self, word_in, emb_dim, k_aspect):
+  def __init__(self, word_in, emb_dim, k_aspect, weight, lambda_):
     super(Aspect_Extrac, self).__init__()
-    self.att_based_enc = Att_based_enc(word_in, emb_dim)
+    self.k_aspect = k_aspect
+    self.lambda_ = lambda_
+    self.att_based_enc = Att_based_enc(word_in, emb_dim, weight)
     self.auto_enc = AutoEnc(k_aspect, emb_dim)
   
   def forward(self, x, ngt):
     emb_v, y_n = self.att_based_enc(x, ngt)
-    out = self.auto_enc(emb_v)
-    return out, y_n
+    out, t_matrix, p = self.auto_enc(emb_v)
+    t_n = torch.nn.functional.normalize(t_matrix)
+    reg_turn = self.lambda_*torch.norm(torch.mm(t_n,t_n.permute(1,0))- torch.eye(self.k_aspect, self.k_aspect).cuda())
+    return out, y_n, reg_turn, p
